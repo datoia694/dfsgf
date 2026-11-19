@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="ka">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>document</title>
+<style>
+:root{--bg:#14110e;--panel:rgba(20,16,12,.82);--fg:#f3e9d2;--accent:#e0a030;--bad:#d9534f;box-sizing:border-box;color-scheme:dark}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#14110e;--fg:#f3e9d2}}
+:root[data-theme="dark"]{--bg:#14110e;--fg:#f3e9d2}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font-family:'Noto Sans Georgian',system-ui,sans-serif;overflow:hidden;user-select:none}
+canvas{display:block;width:100%;height:100%}
+#hud{position:fixed;inset:0;pointer-events:none;padding:calc(12px + env(safe-area-inset-top,0px)) 16px 12px;display:none}
+#hud .row{display:flex;justify-content:space-between;font-size:20px;font-weight:700;text-shadow:0 2px 6px #000}
+#hp{letter-spacing:4px;color:var(--bad)}
+#hint{position:fixed;left:0;right:0;bottom:calc(10px + env(safe-area-inset-bottom,0px));text-align:center;font-size:13px;opacity:.7;display:none}
+.ov{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;padding:20px}
+.ov h1{margin:0;font-size:clamp(28px,6vw,52px);color:var(--accent);text-shadow:0 3px 12px #000}
+.ov p{margin:0;max-width:440px;opacity:.9;text-shadow:0 2px 6px #000}
+.btns{display:flex;gap:10px;align-items:center}
+button{font:inherit;font-weight:700;background:var(--accent);color:#1b1306;border:0;border-radius:10px;padding:12px 22px;cursor:pointer}
+button.sec{background:var(--panel);color:var(--fg);border:1px solid #fff3;padding:12px 16px}
+#menu{justify-content:flex-end;padding-bottom:calc(28px + env(safe-area-inset-bottom,0px));background:linear-gradient(transparent 45%,#000a)}
+#over{display:none;background:#000b}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hud"><div class="row"><div>ტალღა <span id="wave">1</span></div><div id="hp"></div><div>ქულა <span id="score">0</span></div></div></div>
+<div id="hint">WASD — სიარული · მაუსი — მიზნება · დაწკაპუნება / Space — შუბის სროლა</div>
+<div id="menu" class="ov">
+  <h1>მინიატურების ბრძოლა</h1>
+  <p>დააგენერირე შემთხვევითი გმირი და გაუძელი მტრების ტალღებს. რაც მეტს გაანადგურებ, მით მეტი მოვა!</p>
+  <div class="btns"><button class="sec" id="prev">ახალი გმირი</button><button id="start">თამაში</button></div>
+  <p style="font-size:13px;opacity:.6">რეკორდი: <span id="best">0</span></p>
+</div>
+<div id="over" class="ov"><h1>დამარცხდი</h1><p>ქულა: <b id="fs">0</b> · ტალღა: <b id="fw">1</b></p><button id="again">თავიდან</button></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const FACE=0,H=1.9;
+
+const cv=document.getElementById('c'),R=new THREE.WebGLRenderer({canvas:cv,antialias:true});
+R.setPixelRatio(Math.min(devicePixelRatio,2));R.shadowMap.enabled=true;
+const scene=new THREE.Scene();scene.background=new THREE.Color(0x14110e);scene.fog=new THREE.Fog(0x14110e,26,48);
+const cam=new THREE.PerspectiveCamera(50,1,.1,100);
+function resize(){R.setSize(innerWidth,innerHeight,false);cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix()}addEventListener('resize',resize);resize();
+scene.add(new THREE.HemisphereLight(0xfff0d0,0x3a2a1a,.9));
+const sun=new THREE.DirectionalLight(0xffe2b0,1.1);sun.position.set(8,18,6);sun.castShadow=true;sun.shadow.mapSize.set(2048,2048);
+Object.assign(sun.shadow.camera,{left:-26,right:26,top:26,bottom:-26,near:1,far:50});scene.add(sun);
+const ARENA=18;
+const table=new THREE.Mesh(new THREE.CylinderGeometry(ARENA+2,ARENA+2,.6,64),new THREE.MeshStandardMaterial({color:0x4a3320,roughness:.9}));table.position.y=-.3;table.receiveShadow=true;scene.add(table);
+const felt=new THREE.Mesh(new THREE.CircleGeometry(ARENA,64),new THREE.MeshStandardMaterial({color:0x2f5a3a,roughness:1}));felt.rotation.x=-Math.PI/2;felt.position.y=.01;felt.receiveShadow=true;scene.add(felt);
+const rim=new THREE.Mesh(new THREE.TorusGeometry(ARENA,.18,8,96),new THREE.MeshStandardMaterial({color:0xe0a030,roughness:.5}));rim.rotation.x=Math.PI/2;rim.position.y=.1;scene.add(rim);
+
+function rng(a){return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function makeChar(seed,enemy){
+  const r=rng(seed),mats=[],g=new THREE.Group(),w=new THREE.Group();
+  const hue=r(),col=()=>new THREE.Color().setHSL((hue+r()*.15)%1,.5+r()*.4,.4+r()*.2);
+  const M=c=>{const m=new THREE.MeshStandardMaterial({color:c,roughness:.6});mats.push(m);return m};
+  const add=(p,geo,mat,x,y,z)=>{const m=new THREE.Mesh(geo,mat);m.position.set(x,y,z);m.castShadow=true;p.add(m);return m};
+  const skin=M(col()),cloth=M(col()),trim=M(col());
+  const bw=.6+r()*.4,bh=.7+r()*.4,lh=.4+r()*.3,hs=.4+r()*.25,total=lh+bh+hs;
+  add(g,r()<.5?new THREE.BoxGeometry(bw,bh,bw*.7):new THREE.CylinderGeometry(bw*.45,bw*.55,bh,12),cloth,0,lh+bh/2,0);
+  const legs=[-1,1].map(s=>{const p=new THREE.Group();p.position.set(s*bw*.25,lh,0);g.add(p);add(p,new THREE.BoxGeometry(.2,lh,.22),trim,0,-lh/2,0);return p});
+  const al=bh*.85,arms=[-1,1].map(s=>{const p=new THREE.Group();p.position.set(s*(bw*.5+.1),lh+bh-.1,0);g.add(p);add(p,new THREE.BoxGeometry(.17,al,.17),skin,0,-al/2,0);return p});
+  const hy=lh+bh+hs/2;
+  add(g,r()<.5?new THREE.SphereGeometry(hs/2,16,12):new THREE.BoxGeometry(hs,hs,hs),skin,0,hy,0);
+  const eyeM=new THREE.MeshBasicMaterial({color:enemy?0xff2a2a:0xffffff}),pup=new THREE.MeshBasicMaterial({color:0x111111});
+  [-1,1].forEach(s=>{add(g,new THREE.SphereGeometry(hs*.13,8,8),eyeM,s*hs*.2,hy+hs*.08,hs*.42);if(!enemy)add(g,new THREE.SphereGeometry(hs*.06,8,8),pup,s*hs*.2,hy+hs*.08,hs*.53)});
+  const top=hy+hs/2,acc=Math.floor(r()*6);
+  if(acc===0)[-1,1].forEach(s=>{const h=add(g,new THREE.ConeGeometry(hs*.12,hs*.5,8),M(0xf2ead0),s*hs*.32,top+hs*.05,0);h.rotation.z=-s*.4});
+  else if(acc===1)add(g,new THREE.ConeGeometry(hs*.55,hs*.8,10),trim,0,top+hs*.3,0);
+  else if(acc===2){add(g,new THREE.CylinderGeometry(.02,.02,hs*.6,6),trim,0,top+hs*.3,0);add(g,new THREE.SphereGeometry(hs*.12,8,8),M(0xffd34a),0,top+hs*.62,0)}
+  else if(acc===3)[-1,1].forEach(s=>add(g,new THREE.SphereGeometry(hs*.22,8,8),skin,s*hs*.55,hy,0));
+  else if(acc===4)add(g,new THREE.BoxGeometry(hs*.12,hs*.45,hs*.9),trim,0,top+hs*.15,0);
+  else add(g,new THREE.CylinderGeometry(hs*.4,hs*.4,hs*.6,12),trim,0,top+hs*.25,0);
+  g.scale.setScalar(H/(total+hs*.3));w.add(g);
+  const ring=new THREE.Mesh(new THREE.RingGeometry(.65,.8,32),new THREE.MeshBasicMaterial({color:enemy?0xd9302c:0xf0c040,side:THREE.DoubleSide}));ring.rotation.x=-Math.PI/2;ring.position.y=.03;w.add(ring);
+  w.userData={mats,arms,legs};return w}
+function walk(m,a){const u=m.userData,s=Math.sin(t*14)*.9*a;u.arms[0].rotation.x=s;u.arms[1].rotation.x=-s;u.legs[0].rotation.x=-s*.7;u.legs[1].rotation.x=s*.7}
+function makeSpear(){const g=new THREE.Group(),m=new THREE.MeshStandardMaterial({color:0xf0c040,roughness:.4,metalness:.3});
+  const sh=new THREE.Mesh(new THREE.CylinderGeometry(.04,.04,1.6,6),m),tip=new THREE.Mesh(new THREE.ConeGeometry(.12,.35,8),m);
+  sh.rotation.x=tip.rotation.x=Math.PI/2;tip.position.z=.95;g.add(sh,tip);return g}
+
+let heroSeed=Math.random()*1e9|0,state='menu',hero=null,player,enemies=[],spears=[],score=0,wave=1,toSpawn=0,spawnT=0,shootT=0,t=0,hpMax=5;
+const keys={},mouse={x:0,y:0,down:false},ray=new THREE.Raycaster(),plane=new THREE.Plane(new THREE.Vector3(0,1,0),0),aim=new THREE.Vector3();
+const $=id=>document.getElementById(id);
+let best=0;try{best=+localStorage.getItem('minibest')||0}catch(e){}$('best').textContent=best;
+
+function showHero(){if(hero)scene.remove(hero);hero=makeChar(heroSeed,false);scene.add(hero)}
+showHero();
+$('prev').onclick=()=>{heroSeed=Math.random()*1e9|0;showHero()};
+
+function start(){
+  scene.remove(hero);enemies.forEach(e=>scene.remove(e.m));spears.forEach(s=>scene.remove(s.m));enemies=[];spears=[];
+  player={m:makeChar(heroSeed,false),hp:hpMax,inv:0,vx:0,vz:0};scene.add(player.m);
+  score=0;wave=0;toSpawn=0;state='play';
+  $('menu').style.display='none';$('over').style.display='none';$('hud').style.display='block';$('hint').style.display='block';updHUD();
+}
+function updHUD(){$('score').textContent=score;$('wave').textContent=wave;$('hp').textContent='♥'.repeat(Math.max(0,player.hp))}
+function spawn(){
+  const a=Math.random()*Math.PI*2;
+  const m=makeChar(Math.random()*1e9|0,true);m.position.set(Math.cos(a)*(ARENA-1),0,Math.sin(a)*(ARENA-1));scene.add(m);
+  enemies.push({m,hp:1+Math.floor(wave/4),sp:1.8+Math.random()*.8+Math.min(wave*.18,2.6),ph:Math.random()*9,flash:0,dying:0});
+}
+function shoot(){
+  if(shootT>0)return;shootT=.35;
+  const d=new THREE.Vector3(aim.x-player.m.position.x,0,aim.z-player.m.position.z);if(d.lengthSq()<.01)d.set(Math.sin(player.m.rotation.y-FACE),0,Math.cos(player.m.rotation.y-FACE));d.normalize();
+  const g=makeSpear();
+  g.position.set(player.m.position.x+d.x*.9,1.1,player.m.position.z+d.z*.9);g.rotation.y=Math.atan2(d.x,d.z);scene.add(g);
+  spears.push({m:g,d,life:1.1});
+}
+function end(){state='over';best=Math.max(best,score);try{localStorage.setItem('minibest',best)}catch(e){}
+  $('best').textContent=best;$('fs').textContent=score;$('fw').textContent=wave;$('over').style.display='flex';$('hint').style.display='none'}
+
+function update(dt){
+  const p=player.m.position;
+  let ix=(keys.d||keys.ArrowRight?1:0)-(keys.a||keys.ArrowLeft?1:0),iz=(keys.s||keys.ArrowDown?1:0)-(keys.w||keys.ArrowUp?1:0);
+  const l=Math.hypot(ix,iz)||1;p.x+=ix/l*6.5*dt;p.z+=iz/l*6.5*dt;
+  const pr=Math.hypot(p.x,p.z);if(pr>ARENA-.8){p.x*=(ARENA-.8)/pr;p.z*=(ARENA-.8)/pr}
+  p.y=(ix||iz)?Math.abs(Math.sin(t*14))*.12:0;walk(player.m,ix||iz?1:0);
+  ray.setFromCamera(mouse,cam);ray.ray.intersectPlane(plane,aim);
+  if(aim)player.m.rotation.y=Math.atan2(aim.x-p.x,aim.z-p.z)+FACE;
+  shootT-=dt;player.inv-=dt;player.m.visible=player.inv<=0||Math.floor(t*20)%2==0;
+  if(mouse.down||keys[' '])shoot();
+  // waves
+  if(!toSpawn&&!enemies.length){wave++;toSpawn=3+wave*2;updHUD()}
+  if(toSpawn>0&&(spawnT-=dt)<=0){spawn();toSpawn--;spawnT=Math.max(.25,.8-wave*.04)}
+  // spears
+  for(let i=spears.length-1;i>=0;i--){const s=spears[i];s.m.position.addScaledVector(s.d,22*dt);s.life-=dt;let hit=false;
+    for(const e of enemies){if(e.dying)continue;const q=e.m.position;if(Math.hypot(q.x-s.m.position.x,q.z-s.m.position.z)<.95){
+      e.hp--;e.flash=.15;hit=true;if(e.hp<=0){e.dying=.25;score+=10;updHUD()}break}}
+    if(hit||s.life<=0){scene.remove(s.m);spears.splice(i,1)}}
+  // enemies
+  for(let i=enemies.length-1;i>=0;i--){const e=enemies[i],q=e.m.position;
+    if(e.dying>0){e.dying-=dt;e.m.scale.setScalar(Math.max(0,e.dying/.25));e.m.rotation.z+=dt*12;if(e.dying<=0){scene.remove(e.m);enemies.splice(i,1)}continue}
+    const dx=p.x-q.x,dz=p.z-q.z,d=Math.hypot(dx,dz)||1;
+    q.x+=dx/d*e.sp*dt;q.z+=dz/d*e.sp*dt;
+    for(const o of enemies){if(o===e||o.dying)continue;const ox=q.x-o.m.position.x,oz=q.z-o.m.position.z,od=Math.hypot(ox,oz);if(od<1&&od>0){q.x+=ox/od*dt*2.5;q.z+=oz/od*dt*2.5}}
+    q.y=Math.abs(Math.sin(t*9+e.ph))*.15;e.m.rotation.y=Math.atan2(dx,dz)+FACE;
+    e.flash-=dt;e.m.userData.mats.forEach(x=>x.emissive.setHex(e.flash>0?0xffffff:0));walk(e.m,1);
+    if(d<1&&player.inv<=0){player.hp--;player.inv=1;p.x-=dx/d*1.5;p.z-=dz/d*1.5;updHUD();if(player.hp<=0){end();return}}}
+  // camera
+  cam.position.lerp(new THREE.Vector3(p.x*.8,15,p.z*.8+11),Math.min(1,dt*4));cam.lookAt(p.x*.8,0,p.z*.8);
+}
+let last=performance.now();
+function loop(now){const dt=Math.min(.05,(now-last)/1000);last=now;t+=dt;
+  if(state==='play')update(dt);
+  else{hero&&(hero.rotation.y+=dt*.9);hero&&(hero.position.y=0);cam.position.set(0,2.3,6);cam.lookAt(0,1.1,0);hero&&hero.position.set(0,0,0)}
+  R.render(scene,cam);requestAnimationFrame(loop)}
+requestAnimationFrame(loop);
+
+addEventListener('keydown',e=>{const k=e.key.length===1?e.key.toLowerCase():e.key;keys[k]=true;if(k===' ')e.preventDefault();
+  if(state==='menu'){if(k==='ArrowLeft'||k==='ArrowRight'||k==='a'||k==='d'||k==='r')$('prev').onclick();if(k==='Enter')start()}
+  else if(state==='over'&&k==='Enter')start()});
+addEventListener('keyup',e=>{keys[e.key.length===1?e.key.toLowerCase():e.key]=false});
+const mp=e=>{mouse.x=e.clientX/innerWidth*2-1;mouse.y=-(e.clientY/innerHeight)*2+1};
+cv.addEventListener('pointermove',mp);cv.addEventListener('pointerdown',e=>{mp(e);mouse.down=true});addEventListener('pointerup',()=>mouse.down=false);
+$('start').onclick=start;$('again').onclick=start;
+</script>
+</body>
+</html>
